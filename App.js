@@ -13,12 +13,16 @@ import { colors } from './src/lib/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import InventoryScreen from './src/screens/InventoryScreen';
 import ItemDetailScreen from './src/screens/ItemDetailScreen';
+import ItemFormScreen from './src/screens/ItemFormScreen';
 import RequisitionsScreen from './src/screens/RequisitionsScreen';
 import RequisitionDetailScreen from './src/screens/RequisitionDetailScreen';
 import BoatNoteScreen from './src/screens/BoatNoteScreen';
 import AlertsScreen from './src/screens/AlertsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import SetupScreen from './src/screens/SetupScreen';
+import LoginScreen from './src/screens/LoginScreen';
+import StoresScreen from './src/screens/StoresScreen';
+import StoreFormScreen from './src/screens/StoreFormScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -74,28 +78,48 @@ function Tabs() {
   );
 }
 
-function Root() {
-  const { ready, configured } = useApp();
+function Splash() {
+  return (
+    <View style={styles.splash}>
+      <ActivityIndicator size="large" color={colors.primaryLight} />
+    </View>
+  );
+}
 
-  if (!ready) {
+function Root() {
+  const { ready, configured, signedIn, authChecked } = useApp();
+
+  if (!ready) return <Splash />;
+
+  // Not connected to a backend yet → first-run setup.
+  if (!configured) {
     return (
-      <View style={styles.splash}>
-        <ActivityIndicator size="large" color={colors.primaryLight} />
-      </View>
+      <NavigationContainer theme={navTheme}>
+        <Stack.Navigator screenOptions={screenHeader}>
+          <Stack.Screen name="Setup" component={SetupScreen} options={{ headerShown: false }} />
+        </Stack.Navigator>
+      </NavigationContainer>
     );
   }
 
+  // Connected but auth state still resolving.
+  if (!authChecked) return <Splash />;
+
   return (
     <NavigationContainer theme={navTheme}>
-      {!configured ? (
+      {!signedIn ? (
         <Stack.Navigator screenOptions={screenHeader}>
-          <Stack.Screen name="Setup" component={SetupScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
         </Stack.Navigator>
       ) : (
         <Stack.Navigator screenOptions={screenHeader}>
           <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
           <Stack.Screen name="ItemDetail" component={ItemDetailScreen} options={{ title: 'Item details' }} />
+          <Stack.Screen name="ItemForm" component={ItemFormScreen} options={{ title: 'Item' }} />
           <Stack.Screen name="RequisitionDetail" component={RequisitionDetailScreen} options={{ title: 'Requisition' }} />
+          <Stack.Screen name="Stores" component={StoresScreen} options={{ title: 'Manage stores' }} />
+          <Stack.Screen name="StoreForm" component={StoreFormScreen} options={{ title: 'Store' }} />
           <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
         </Stack.Navigator>
       )}

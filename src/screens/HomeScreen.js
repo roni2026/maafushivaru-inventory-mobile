@@ -95,12 +95,16 @@ export default function HomeScreen({ navigation }) {
         <Tile icon="document-text" label="Pending reqs" value={stats.pendingReqs} tone={colors.sky} onPress={() => navigation.navigate('Requisitions')} />
       </View>
 
+      <Text style={styles.section}>Manage</Text>
+      <NavCard icon="add-circle-outline" title="Add item" subtitle="Create a new inventory item" onPress={() => navigation.navigate('ItemForm')} />
+      <NavCard icon="business-outline" title="Stores" subtitle="Add, rename & delete stores" onPress={() => navigation.navigate('Stores')} />
+
       <Text style={styles.section}>Browse</Text>
-      <NavCard icon="search" title="Inventory" subtitle="Search items by name, ID or description" onPress={() => navigation.navigate('Inventory')} />
+      <NavCard icon="search" title="Inventory" subtitle="Search, edit items & adjust stock" onPress={() => navigation.navigate('Inventory')} />
       <NavCard icon="document-text-outline" title="Requisitions" subtitle="Pending & completed requisitions" onPress={() => navigation.navigate('Requisitions')} />
       <NavCard icon="boat-outline" title="Boat Notes" subtitle={`This week (${stats.weekNotes}) · sortable`} onPress={() => navigation.navigate('BoatNote')} />
       <NavCard icon="notifications-outline" title="Alerts" subtitle="Low stock & expiring items" onPress={() => navigation.navigate('Alerts')} />
-      <NavCard icon="settings-outline" title="Settings" subtitle="Backend connection" onPress={() => navigation.navigate('Settings')} />
+      <NavCard icon="settings-outline" title="Settings" subtitle="Account & backend connection" onPress={() => navigation.navigate('Settings')} />
     </ScrollView>
   );
 }

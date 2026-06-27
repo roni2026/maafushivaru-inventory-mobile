@@ -1,6 +1,13 @@
 // A small Supabase client factory. The client is (re)created whenever the
 // configured URL / anon key changes (e.g. after editing them in Settings).
+//
+// The client persists its auth session in AsyncStorage so the user stays
+// signed in between launches. Signing in (email/password, same account as the
+// web app) is what grants the `authenticated` role full read/write access under
+// the database's row-level-security policies — without it the app can only act
+// as the anonymous role, which the RLS policies deny.
 import { createClient } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 let _client = null;
 let _key = '';
@@ -10,7 +17,12 @@ export function makeClient({ url, anonKey }) {
   if (_client && sig === _key) return _client;
   _key = sig;
   _client = createClient(url, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
+    auth: {
+      storage: AsyncStorage,
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+    },
   });
   return _client;
 }

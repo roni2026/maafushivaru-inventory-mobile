@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '../context/AppContext';
 import { fetchAll } from '../lib/supabase';
 import { colors, radius, spacing } from '../lib/theme';
-import { SearchBar, Chip, Loading, EmptyState, ErrorView, Badge } from '../components/ui';
+import { SearchBar, Chip, Loading, EmptyState, ErrorView, Badge, FAB } from '../components/ui';
 import { daysUntil, num } from '../lib/format';
 
 const CATEGORIES = ['All', 'Food', 'General', 'Beverage'];
@@ -21,7 +22,7 @@ function expiryTone(days) {
   return null;
 }
 
-export default function InventoryScreen({ navigation }) {
+export default function InventoryScreen({ navigation, route }) {
   const { supabase } = useApp();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +30,7 @@ export default function InventoryScreen({ navigation }) {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState('All');
+  const [showInactive, setShowInactive] = useState(false);
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -37,10 +39,10 @@ export default function InventoryScreen({ navigation }) {
       const rows = await fetchAll(() =>
         supabase
           .from('items')
-          .select('id,part_number,name,unit,current_stock,min_stock,expiry_date,notes,supplier,active,stores(name,category)')
+          .select('*, stores(id,name,category)')
           .order('name')
       );
-      setItems(rows.filter(isActiveItem));
+      setItems(rows);
     } catch (e) {
       setError(e?.message || 'Failed to load inventory');
     } finally {
@@ -51,11 +53,17 @@ export default function InventoryScreen({ navigation }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Refresh whenever the screen regains focus (e.g. after add/edit/delete).
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // Also react to an explicit refresh signal passed via navigation params.
+  useEffect(() => { if (route?.params?.refresh) load(); }, [route?.params?.refresh, load]);
+
   const onRefresh = () => { setRefreshing(true); load(); };
 
   // Search by NAME, ID (part_number) and DESCRIPTION (notes / supplier).
   const filtered = useMemo(() => {
-    let list = items;
+    let list = showInactive ? items : items.filter(isActiveItem);
     if (cat !== 'All') list = list.filter((i) => i.stores?.category === cat);
     const q = search.trim().toLowerCase();
     if (q) {
@@ -67,16 +75,17 @@ export default function InventoryScreen({ navigation }) {
       );
     }
     return list;
-  }, [items, search, cat]);
+  }, [items, search, cat, showInactive]);
 
   const renderItem = ({ item }) => {
     const days = daysUntil(item.expiry_date);
     const exp = expiryTone(days);
     const isLow = num(item.current_stock) <= num(item.min_stock);
     const isOut = num(item.current_stock) === 0;
+    const inactive = item.active === false;
     return (
       <TouchableOpacity
-        style={styles.row}
+        style={[styles.row, inactive && { opacity: 0.55 }]}
         onPress={() => navigation.navigate('ItemDetail', { item })}
       >
         <View style={{ flex: 1 }}>
@@ -85,6 +94,7 @@ export default function InventoryScreen({ navigation }) {
             #{item.part_number} · {item.stores?.name || '—'}
           </Text>
           <View style={styles.badges}>
+            {inactive && <Badge label="INACTIVE" tone="dim" />}
             {isOut ? <Badge label="OUT OF STOCK" tone="red" />
               : isLow ? <Badge label="LOW STOCK" tone="orange" /> : null}
             {exp && <Badge label={exp.label} tone={exp.tone} />}
@@ -116,6 +126,7 @@ export default function InventoryScreen({ navigation }) {
           {CATEGORIES.map((c) => (
             <Chip key={c} label={c} active={cat === c} onPress={() => setCat(c)} />
           ))}
+          <Chip label={showInactive ? 'Incl. inactive' : 'Active only'} active={showInactive} onPress={() => setShowInactive((s) => !s)} />
         </View>
         <Text style={styles.count}>{filtered.length} item{filtered.length !== 1 ? 's' : ''}</Text>
       </View>
@@ -123,11 +134,12 @@ export default function InventoryScreen({ navigation }) {
         data={filtered}
         keyExtractor={(i) => i.id}
         renderItem={renderItem}
-        contentContainerStyle={{ padding: spacing.md, paddingTop: 0 }}
+        contentContainerStyle={{ padding: spacing.md, paddingTop: 0, paddingBottom: 96 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primaryLight} />}
-        ListEmptyComponent={<EmptyState icon="search" title="No items found" subtitle="Try a different search or category." />}
+        ListEmptyComponent={<EmptyState icon="cube-outline" title="No items" subtitle="Tap + to add your first item, or pull to refresh." />}
         keyboardShouldPersistTaps="handled"
       />
+      <FAB icon="add" onPress={() => navigation.navigate('ItemForm')} />
     </View>
   );
 }

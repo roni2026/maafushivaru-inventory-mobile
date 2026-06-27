@@ -7,7 +7,9 @@
     "scheme": "mvminventory",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#0f172a",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#0f172a"
     },
@@ -19,7 +21,14 @@
     "android": {
       "package": "com.maafushivaru.inventory",
       "versionCode": 1,
-      "permissions": ["INTERNET"]
+      "permissions": ["INTERNET"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f172a"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
     },
     "extra": {
       "SUPABASE_URL": "",
