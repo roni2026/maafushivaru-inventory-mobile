@@ -7,7 +7,10 @@ import { colors, radius, spacing } from '../lib/theme';
 import { SearchBar, Chip, Loading, EmptyState, ErrorView, Badge } from '../components/ui';
 import { daysUntil, num } from '../lib/format';
 
-const CATEGORIES = ['All', 'General', 'Food', 'Beverage'];
+const CATEGORIES = ['All', 'Food', 'General', 'Beverage'];
+
+// Active unless explicitly deactivated — tolerates a missing/NULL `active` column.
+const isActiveItem = (i) => i && i.active !== false;
 
 function expiryTone(days) {
   if (days === null) return null;
@@ -34,11 +37,10 @@ export default function InventoryScreen({ navigation }) {
       const rows = await fetchAll(() =>
         supabase
           .from('items')
-          .select('id,part_number,name,unit,current_stock,min_stock,expiry_date,notes,supplier,stores(name,category)')
-          .eq('active', true)
+          .select('id,part_number,name,unit,current_stock,min_stock,expiry_date,notes,supplier,active,stores(name,category)')
           .order('name')
       );
-      setItems(rows);
+      setItems(rows.filter(isActiveItem));
     } catch (e) {
       setError(e?.message || 'Failed to load inventory');
     } finally {

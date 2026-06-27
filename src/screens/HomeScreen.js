@@ -39,9 +39,11 @@ export default function HomeScreen({ navigation }) {
   const load = useCallback(async () => {
     if (!supabase) return;
     try {
-      const items = await fetchAll(() =>
-        supabase.from('items').select('current_stock,min_stock,expiry_date').eq('active', true)
+      const allItems = await fetchAll(() =>
+        supabase.from('items').select('current_stock,min_stock,expiry_date,active')
       );
+      // Active unless explicitly deactivated (tolerates missing/NULL `active`).
+      const items = allItems.filter((i) => i && i.active !== false);
       const low = items.filter((i) => num(i.current_stock) <= num(i.min_stock)).length;
       const expiring = items.filter((i) => {
         const d = daysUntil(i.expiry_date);

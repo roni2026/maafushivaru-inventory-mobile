@@ -21,10 +21,10 @@ export default function AlertsScreen() {
       const rows = await fetchAll(() =>
         supabase
           .from('items')
-          .select('id,part_number,name,unit,current_stock,min_stock,expiry_date,stores(name)')
-          .eq('active', true)
+          .select('id,part_number,name,unit,current_stock,min_stock,expiry_date,active,stores(name)')
       );
-      setItems(rows);
+      // Active unless explicitly deactivated (tolerates missing/NULL `active`).
+      setItems(rows.filter((i) => i && i.active !== false));
     } catch (e) {
       setError(e?.message || 'Failed to load alerts');
     } finally {
