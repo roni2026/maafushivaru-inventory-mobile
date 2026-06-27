@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Maafushivaru Inventory",
+    "slug": "mvm-inventory-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "mvminventory",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#0f172a",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.maafushivaru.inventory"
+    },
+    "android": {
+      "package": "com.maafushivaru.inventory",
+      "versionCode": 1,
+      "permissions": ["INTERNET"]
+    },
+    "extra": {
+      "SUPABASE_URL": "",
+      "SUPABASE_ANON_KEY": "",
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}
