@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
@@ -26,6 +26,9 @@ import SetupScreen from './src/screens/SetupScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import StoresScreen from './src/screens/StoresScreen';
 import StoreFormScreen from './src/screens/StoreFormScreen';
+import StoreTasksScreen from './src/screens/StoreTasksScreen';
+import StoreTaskFormScreen from './src/screens/StoreTaskFormScreen';
+import { initNotifications } from './src/lib/notifications';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -145,6 +148,8 @@ function Root() {
           <Stack.Screen name="RequisitionDetail" component={RequisitionDetailScreen} options={{ title: 'Requisition' }} />
           <Stack.Screen name="Stores" component={StoresScreen} options={{ title: 'Manage stores' }} />
           <Stack.Screen name="StoreForm" component={StoreFormScreen} options={{ title: 'Store' }} />
+          <Stack.Screen name="StoreTasks" component={StoreTasksScreen} options={{ title: 'Store Tasks' }} />
+          <Stack.Screen name="StoreTaskForm" component={StoreTaskFormScreen} options={{ title: 'Task' }} />
           <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
         </Stack.Navigator>
       )}
@@ -153,6 +158,7 @@ function Root() {
 }
 
 export default function App() {
+  useEffect(() => { initNotifications(); }, []);
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />

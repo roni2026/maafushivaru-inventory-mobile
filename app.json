@@ -20,6 +20,12 @@
         {
           "cameraPermission": "Allow Maafushivaru Inventory to use the camera to scan fuel chits, boat notes and expiry dates."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#2dd4bf"
+        }
       ]
     ],
     "ios": {
@@ -32,7 +38,7 @@
     "android": {
       "package": "com.maafushivaru.inventory",
       "versionCode": 1,
-      "permissions": ["INTERNET", "CAMERA"],
+      "permissions": ["INTERNET", "CAMERA", "POST_NOTIFICATIONS", "SCHEDULE_EXACT_ALARM", "VIBRATE", "RECEIVE_BOOT_COMPLETED"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"
