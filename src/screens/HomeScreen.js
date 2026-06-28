@@ -96,6 +96,9 @@ export default function HomeScreen({ navigation }) {
       </View>
 
       <Text style={styles.section}>Manage</Text>
+      <NavCard icon="camera-outline" title="Scan (camera)" subtitle="Fuel, expiry, boat notes — pick a type & shoot" onPress={() => navigation.navigate('Scan')} />
+      <NavCard icon="water-outline" title="Dive Centre Fuel" subtitle="Daily petrol & diesel chits" onPress={() => navigation.navigate('Fuel')} />
+      <NavCard icon="calendar-outline" title="Manage Expiry" subtitle="Set / edit / clear expiry for many items" onPress={() => navigation.navigate('ExpiryManager')} />
       <NavCard icon="add-circle-outline" title="Add item" subtitle="Create a new inventory item" onPress={() => navigation.navigate('ItemForm')} />
       <NavCard icon="business-outline" title="Stores" subtitle="Add, rename & delete stores" onPress={() => navigation.navigate('Stores')} />
 

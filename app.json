@@ -14,14 +14,25 @@
       "backgroundColor": "#0f172a"
     },
     "assetBundlePatterns": ["**/*"],
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Maafushivaru Inventory to use the camera to scan fuel chits, boat notes and expiry dates."
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.maafushivaru.inventory"
+      "bundleIdentifier": "com.maafushivaru.inventory",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Maafushivaru Inventory to use the camera to scan fuel chits, boat notes and expiry dates."
+      }
     },
     "android": {
       "package": "com.maafushivaru.inventory",
       "versionCode": 1,
-      "permissions": ["INTERNET"],
+      "permissions": ["INTERNET", "CAMERA"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"

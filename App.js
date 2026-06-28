@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -18,6 +18,9 @@ import RequisitionsScreen from './src/screens/RequisitionsScreen';
 import RequisitionDetailScreen from './src/screens/RequisitionDetailScreen';
 import BoatNoteScreen from './src/screens/BoatNoteScreen';
 import AlertsScreen from './src/screens/AlertsScreen';
+import ScanScreen from './src/screens/ScanScreen';
+import FuelScreen from './src/screens/FuelScreen';
+import ExpiryManagerScreen from './src/screens/ExpiryManagerScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import SetupScreen from './src/screens/SetupScreen';
 import LoginScreen from './src/screens/LoginScreen';
@@ -50,17 +53,26 @@ const screenHeader = {
 const TAB_ICONS = {
   Home: 'home',
   Inventory: 'cube',
-  Requisitions: 'document-text',
+  Scan: 'camera',
   BoatNote: 'boat',
   Alerts: 'notifications',
 };
+
+// Raised circular camera button in the bottom-middle of the tab bar.
+function CenterScanButton({ children, onPress }) {
+  return (
+    <TouchableOpacity style={styles.centerWrap} onPress={onPress} activeOpacity={0.85}>
+      <View style={styles.centerBtn}>{children}</View>
+    </TouchableOpacity>
+  );
+}
 
 function Tabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         ...screenHeader,
-        tabBarStyle: { backgroundColor: colors.card, borderTopColor: colors.border },
+        tabBarStyle: { backgroundColor: colors.card, borderTopColor: colors.border, height: 60, paddingBottom: 6, paddingTop: 6 },
         tabBarActiveTintColor: colors.primaryLight,
         tabBarInactiveTintColor: colors.textFaint,
         tabBarIcon: ({ color, size }) => {
@@ -71,7 +83,17 @@ function Tabs() {
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ title: 'Home' }} />
       <Tab.Screen name="Inventory" component={InventoryScreen} options={{ title: 'Inventory' }} />
-      <Tab.Screen name="Requisitions" component={RequisitionsScreen} options={{ title: 'Requisitions' }} />
+      <Tab.Screen
+        name="Scan"
+        component={ScanScreen}
+        options={{
+          title: 'Scan',
+          tabBarLabel: () => null,
+          headerShown: true,
+          tabBarIcon: () => <Ionicons name="camera" size={28} color="#fff" />,
+          tabBarButton: (props) => <CenterScanButton {...props} />,
+        }}
+      />
       <Tab.Screen name="BoatNote" component={BoatNoteScreen} options={{ title: 'Boat Notes' }} />
       <Tab.Screen name="Alerts" component={AlertsScreen} options={{ title: 'Alerts' }} />
     </Tab.Navigator>
@@ -115,6 +137,9 @@ function Root() {
       ) : (
         <Stack.Navigator screenOptions={screenHeader}>
           <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
+          <Stack.Screen name="Fuel" component={FuelScreen} options={{ title: 'Dive Centre Fuel' }} />
+          <Stack.Screen name="ExpiryManager" component={ExpiryManagerScreen} options={{ title: 'Manage Expiry' }} />
+          <Stack.Screen name="Requisitions" component={RequisitionsScreen} options={{ title: 'Requisitions' }} />
           <Stack.Screen name="ItemDetail" component={ItemDetailScreen} options={{ title: 'Item details' }} />
           <Stack.Screen name="ItemForm" component={ItemFormScreen} options={{ title: 'Item' }} />
           <Stack.Screen name="RequisitionDetail" component={RequisitionDetailScreen} options={{ title: 'Requisition' }} />
@@ -140,4 +165,11 @@ export default function App() {
 
 const styles = StyleSheet.create({
   splash: { flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' },
+  centerWrap: { top: -18, justifyContent: 'center', alignItems: 'center', flex: 1 },
+  centerBtn: {
+    width: 60, height: 60, borderRadius: 30, backgroundColor: colors.primary,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 4, borderColor: colors.bg,
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 8,
+  },
 });
