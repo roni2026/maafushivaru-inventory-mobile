@@ -107,6 +107,7 @@ export default function HomeScreen({ navigation }) {
       <NavCard icon="search" title="Inventory" subtitle="Search, edit items & adjust stock" onPress={() => navigation.navigate('Inventory')} />
       <NavCard icon="document-text-outline" title="Requisitions" subtitle="Pending & completed requisitions" onPress={() => navigation.navigate('Requisitions')} />
       <NavCard icon="boat-outline" title="Boat Notes" subtitle={`This week (${stats.weekNotes}) · sortable`} onPress={() => navigation.navigate('BoatNote')} />
+      <NavCard icon="alert-circle-outline" title="Not Arrived" subtitle="Track items not arrived / wrong, by store" onPress={() => navigation.navigate('NotArrived')} />
       <NavCard icon="notifications-outline" title="Alerts" subtitle="Low stock & expiring items" onPress={() => navigation.navigate('Alerts')} />
       <NavCard icon="settings-outline" title="Settings" subtitle="Account & backend connection" onPress={() => navigation.navigate('Settings')} />
     </ScrollView>

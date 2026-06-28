@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../context/AppContext';
 import { fetchAll } from '../lib/supabase';
 import { colors, radius, spacing } from '../lib/theme';
-import { Chip, Loading, EmptyState, ErrorView, Badge, SearchBar } from '../components/ui';
+import { Chip, Loading, EmptyState, ErrorView, Badge, SearchBar, SelectField } from '../components/ui';
 import { thisWeekRange, fmtDate, num } from '../lib/format';
 
 const SORTS = [
@@ -19,9 +19,10 @@ const cleanCode = (s) => String(s || '').replace(/^0+/, '') || '';
 const rid = () => Math.random().toString(36).slice(2);
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '').trim());
 
-export default function BoatNoteScreen() {
+export default function BoatNoteScreen({ navigation }) {
   const { supabase, user } = useApp();
   const [scope, setScope] = useState('week'); // week | latest
+  const [deptFilter, setDeptFilter] = useState('');  // '' = all departments
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [items, setItems] = useState([]);
@@ -39,6 +40,7 @@ export default function BoatNoteScreen() {
   const [recvItemId, setRecvItemId] = useState('');  // chosen inventory item id
   const [invSearch, setInvSearch] = useState('');
   const [batches, setBatches] = useState([]);        // [{ id, qty, exp }]
+  const [recvNote, setRecvNote] = useState('');      // note for not-arrived / wrong-item
   const [busy, setBusy] = useState(false);
 
   // ── Load inventory once (for matching + receiving) ──
@@ -113,9 +115,25 @@ export default function BoatNoteScreen() {
     const m = matchOf(item);
     setRecvItemId(item.item_id || m?.id || '');
     setInvSearch('');
+    setRecvNote(item.note || '');
     setBatches([{ id: rid(), qty: item.received_qty != null ? String(item.received_qty) : String(item.ordered_qty ?? ''), exp: item.expiry_date || '' }]);
   };
-  const closeReceive = () => { setRecv(null); setBatches([]); setRecvItemId(''); setInvSearch(''); };
+  const closeReceive = () => { setRecv(null); setBatches([]); setRecvItemId(''); setInvSearch(''); setRecvNote(''); };
+
+  // Flag a line as not arrived / wrong item (with the typed note).
+  const markIssue = async (kind) => {
+    if (!recv) return;
+    setBusy(true);
+    try {
+      const patch = { status: kind, note: recvNote.trim() || null };
+      const { error } = await supabase.from('boat_note_items').update(patch).eq('id', recv.id);
+      if (error) throw error;
+      setItems((prev) => prev.map((r) => (r.id === recv.id ? { ...r, ...patch } : r)));
+      closeReceive();
+    } catch (e) {
+      Alert.alert('Could not update', e?.message || 'error');
+    } finally { setBusy(false); }
+  };
 
   const setBatch = (id, field, val) => setBatches((prev) => prev.map((b) => (b.id === id ? { ...b, [field]: val } : b)));
   const addBatch = () => setBatches((prev) => [...prev, { id: rid(), qty: '', exp: '' }]);
@@ -211,8 +229,14 @@ export default function BoatNoteScreen() {
     ]);
   };
 
+  const deptOptions = useMemo(() => {
+    const ds = [...new Set(items.map((i) => i.department).filter(Boolean))].sort();
+    return [{ label: 'All stores / depts', value: '' }, ...ds.map((d) => ({ label: d, value: d }))];
+  }, [items]);
+
   const sorted = useMemo(() => {
     let list = [...items];
+    if (deptFilter) list = list.filter((i) => i.department === deptFilter);
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((i) =>
@@ -230,7 +254,7 @@ export default function BoatNoteScreen() {
       return asc ? va.localeCompare(vb) : vb.localeCompare(va);
     });
     return list;
-  }, [items, search, sortKey, asc]);
+  }, [items, deptFilter, search, sortKey, asc]);
 
   const selectedNote = notes.find((n) => n.id === selectedId);
 
@@ -293,16 +317,25 @@ export default function BoatNoteScreen() {
             <Text style={styles.noteTitle} numberOfLines={1}>
               {selectedNote.label || `Boat note · ${fmtDate(selectedNote.note_date)}`}
             </Text>
-            <TouchableOpacity onPress={deleteNote} style={styles.delNoteBtn}>
-              <Ionicons name="trash-outline" size={16} color={colors.red} />
-              <Text style={styles.delNoteText}>Delete note</Text>
-            </TouchableOpacity>
+            <View style={styles.noteActions}>
+              <TouchableOpacity onPress={() => navigation.navigate('NotArrived')} style={styles.naBtn}>
+                <Ionicons name="alert-circle-outline" size={16} color={colors.orange} />
+                <Text style={styles.naText}>Not arrived</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={deleteNote} style={styles.delNoteBtn}>
+                <Ionicons name="trash-outline" size={16} color={colors.red} />
+                <Text style={styles.delNoteText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         ) : null}
 
         {!!selectedId && (
           <>
-            <Text style={styles.hint}>Tap an item to receive it into inventory (set qty &amp; one or more expiry dates).</Text>
+            <Text style={styles.hint}>Tap an item to receive it into inventory (set qty &amp; one or more expiry dates), or flag it as not arrived / wrong.</Text>
+            {deptOptions.length > 1 && (
+              <SelectField label="Filter by store / department" value={deptFilter} options={deptOptions} onChange={setDeptFilter} />
+            )}
             <SearchBar value={search} onChangeText={setSearch} placeholder="Search items in this boat note…" />
             <View style={styles.sortRow}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, flexGrow: 1 }}>
@@ -403,6 +436,22 @@ export default function BoatNoteScreen() {
                 <Text style={styles.saveText}>{busy ? 'Receiving…' : `Receive ${totalQty || ''} into inventory`}</Text>
               </TouchableOpacity>
 
+              {/* Problem with this delivery? */}
+              <View style={styles.issueDivider} />
+              <Text style={styles.mLabel}>Problem? Add a note, then flag it</Text>
+              <TextInput style={[styles.mInput, { height: 64, textAlignVertical: 'top', marginTop: 6 }]} value={recvNote}
+                onChangeText={setRecvNote} multiline placeholder="e.g. 2 cases short / wrong size sent" placeholderTextColor={colors.textFaint} />
+              <View style={styles.issueRow}>
+                <TouchableOpacity style={[styles.issueBtn, { borderColor: colors.red }]} onPress={() => markIssue('not_arrived')} disabled={busy}>
+                  <Ionicons name="close-circle-outline" size={16} color={colors.red} />
+                  <Text style={[styles.issueText, { color: colors.red }]}>Didn't arrive</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.issueBtn, { borderColor: colors.orange }]} onPress={() => markIssue('wrong_item')} disabled={busy}>
+                  <Ionicons name="swap-horizontal-outline" size={16} color={colors.orange} />
+                  <Text style={[styles.issueText, { color: colors.orange }]}>Wrong item</Text>
+                </TouchableOpacity>
+              </View>
+
               <TouchableOpacity style={styles.delItemBtn} onPress={() => delItem(recv)}>
                 <Ionicons name="trash-outline" size={16} color={colors.red} />
                 <Text style={styles.delItemText}>Remove item from note</Text>
@@ -425,6 +474,13 @@ const styles = StyleSheet.create({
   noteTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   delNoteBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.red, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 4 },
   delNoteText: { color: colors.red, fontSize: 12, fontWeight: '600' },
+  noteActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  naBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.orange, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 4 },
+  naText: { color: colors.orange, fontSize: 12, fontWeight: '600' },
+  issueDivider: { height: 1, backgroundColor: colors.border, marginTop: 16, marginBottom: 12 },
+  issueRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  issueBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderRadius: radius.md, paddingVertical: 10 },
+  issueText: { fontSize: 13, fontWeight: '700' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 },
   modalCard: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, maxHeight: '88%' },
   modalTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
