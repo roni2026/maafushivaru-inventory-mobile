@@ -1,0 +1,44 @@
+# Files EAS Build should NOT upload in the project archive.
+# Keeping this list tight makes the "uploading archive" step fast and avoids
+# multi-hundred-MB uploads that hang / get cancelled.
+
+# Dependencies (reinstalled on the build server)
+node_modules/
+
+# Version control
+.git/
+.gitignore
+
+# Expo / Metro caches & web output
+.expo/
+.expo-shared/
+dist/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+
+# Native build output (managed workflow regenerates these)
+android/
+ios/
+*.apk
+*.aab
+*.ipa
+*.keystore
+*.jks
+
+# Logs, debug & OS cruft
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+
+# Local secrets / env (configured on the device via the Setup screen)
+.env
+.env.local
+google-services.json
+
+# Editor / coverage
+.vscode/
+.idea/
+coverage/
