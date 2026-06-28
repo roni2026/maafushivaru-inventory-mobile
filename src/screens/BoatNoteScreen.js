@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, Modal, Pressable, TextInput, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../context/AppContext';
+import { fetchAll } from '../lib/supabase';
 import { colors, radius, spacing } from '../lib/theme';
 import { Chip, Loading, EmptyState, ErrorView, Badge, SearchBar } from '../components/ui';
 import { thisWeekRange, fmtDate, num } from '../lib/format';
@@ -14,12 +15,17 @@ const SORTS = [
   { key: 'supplier', label: 'Supplier' },
 ];
 
+const cleanCode = (s) => String(s || '').replace(/^0+/, '') || '';
+const rid = () => Math.random().toString(36).slice(2);
+const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '').trim());
+
 export default function BoatNoteScreen() {
-  const { supabase } = useApp();
+  const { supabase, user } = useApp();
   const [scope, setScope] = useState('week'); // week | latest
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [items, setItems] = useState([]);
+  const [inventory, setInventory] = useState([]);
   const [loadingNotes, setLoadingNotes] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -27,10 +33,28 @@ export default function BoatNoteScreen() {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState('product_name');
   const [asc, setAsc] = useState(true);
-  const [editItem, setEditItem] = useState(null);
-  const [eqty, setEqty] = useState('');
-  const [eexp, setEexp] = useState('');
+
+  // Receive modal state
+  const [recv, setRecv] = useState(null);            // boat_note_item being received
+  const [recvItemId, setRecvItemId] = useState('');  // chosen inventory item id
+  const [invSearch, setInvSearch] = useState('');
+  const [batches, setBatches] = useState([]);        // [{ id, qty, exp }]
   const [busy, setBusy] = useState(false);
+
+  // ── Load inventory once (for matching + receiving) ──
+  useEffect(() => {
+    if (!supabase) return;
+    fetchAll(() => supabase.from('items').select('id,name,part_number,unit,current_stock,origin').eq('active', true))
+      .then(setInventory)
+      .catch(() => { /* tolerate */ });
+  }, [supabase]);
+  const codeMap = useMemo(() => {
+    const m = new Map(); for (const it of inventory) m.set(cleanCode(it.part_number), it); return m;
+  }, [inventory]);
+  const matchOf = useCallback((line) => {
+    if (!line) return null;
+    return inventory.find((i) => i.id === line.item_id) || codeMap.get(cleanCode(line.part_number)) || null;
+  }, [inventory, codeMap]);
 
   const loadNotes = useCallback(async () => {
     if (!supabase) return;
@@ -39,7 +63,7 @@ export default function BoatNoteScreen() {
     try {
       let q = supabase
         .from('boat_notes')
-        .select('id,note_date,label,delivery_day,status,total_items')
+        .select('id,note_date,label,delivery_day,status,total_items,posted_items,created_by')
         .order('note_date', { ascending: false });
       if (scope === 'week') {
         const { from, to } = thisWeekRange();
@@ -68,7 +92,7 @@ export default function BoatNoteScreen() {
     try {
       const { data, error: e } = await supabase
         .from('boat_note_items')
-        .select('id,line_no,supplier,part_number,product_name,unit,ordered_qty,received_qty,department,status,is_sample')
+        .select('id,line_no,supplier,po_number,part_number,product_name,unit,ordered_qty,received_qty,expiry_date,department,status,is_sample,item_id,matched')
         .eq('boat_note_id', selectedId);
       if (e) throw e;
       setItems(data || []);
@@ -83,27 +107,85 @@ export default function BoatNoteScreen() {
 
   const onRefresh = () => { setRefreshing(true); loadNotes(); };
 
-  const openEdit = (item) => {
-    setEditItem(item);
-    setEqty(item.received_qty != null ? String(item.received_qty) : String(item.ordered_qty ?? ''));
-    setEexp(item.expiry_date || '');
+  // ── Open the receive modal for a line ──
+  const openReceive = (item) => {
+    setRecv(item);
+    const m = matchOf(item);
+    setRecvItemId(item.item_id || m?.id || '');
+    setInvSearch('');
+    setBatches([{ id: rid(), qty: item.received_qty != null ? String(item.received_qty) : String(item.ordered_qty ?? ''), exp: item.expiry_date || '' }]);
   };
-  const saveEdit = async () => {
-    if (!editItem) return;
-    const payload = {
-      received_qty: eqty === '' ? null : Number(eqty),
-      expiry_date: /^\d{4}-\d{2}-\d{2}$/.test(eexp) ? eexp : (eexp === '' ? null : editItem.expiry_date),
-    };
+  const closeReceive = () => { setRecv(null); setBatches([]); setRecvItemId(''); setInvSearch(''); };
+
+  const setBatch = (id, field, val) => setBatches((prev) => prev.map((b) => (b.id === id ? { ...b, [field]: val } : b)));
+  const addBatch = () => setBatches((prev) => [...prev, { id: rid(), qty: '', exp: '' }]);
+  const delBatch = (id) => setBatches((prev) => (prev.length > 1 ? prev.filter((b) => b.id !== id) : prev));
+  const totalQty = useMemo(() => batches.reduce((s, b) => s + (Number(b.qty) || 0), 0), [batches]);
+
+  const recvItem = useMemo(() => inventory.find((i) => i.id === recvItemId) || null, [inventory, recvItemId]);
+  const invMatches = useMemo(() => {
+    if (recvItemId) return [];
+    const q = invSearch.trim().toLowerCase();
+    const base = q
+      ? inventory.filter((i) => `${i.name} ${i.part_number}`.toLowerCase().includes(q))
+      : (recv ? inventory.filter((i) => cleanCode(i.part_number) === cleanCode(recv.part_number)) : []);
+    return base.slice(0, 12);
+  }, [inventory, recvItemId, invSearch, recv]);
+
+  const postReceive = async () => {
+    if (!recv) return;
+    if (!recvItemId) { Alert.alert('Pick item', 'Choose the inventory item to receive into.'); return; }
+    if (totalQty <= 0) { Alert.alert('Quantity', 'Enter a received quantity.'); return; }
     setBusy(true);
     try {
-      const { error } = await supabase.from('boat_note_items').update(payload).eq('id', editItem.id);
-      if (error) throw error;
-      setItems((prev) => prev.map((r) => (r.id === editItem.id ? { ...r, ...payload } : r)));
-      setEditItem(null);
+      const dated = batches.filter((b) => isDate(b.exp) && Number(b.qty) > 0);
+      const earliest = dated.map((b) => b.exp).sort()[0] || null;
+      const inv = recvItem;
+      const newStock = num(inv?.current_stock) + totalQty;
+
+      const upd = { current_stock: newStock };
+      if (earliest) upd.expiry_date = earliest;
+      const { error: uErr } = await supabase.from('items').update(upd).eq('id', recvItemId);
+      if (uErr) throw uErr;
+
+      const noteLabel = (notes.find((n) => n.id === selectedId)?.label) || 'Boat note';
+      const noteDate = notes.find((n) => n.id === selectedId)?.note_date || null;
+      await supabase.from('stock_updates').insert({
+        item_id: recvItemId, date: noteDate, quantity_change: totalQty, new_quantity: newStock,
+        updated_by: user?.email || 'mobile', note: `Boat note ${noteLabel}`,
+      });
+      // One inventory batch per expiry (multiple expiry supported).
+      const batchRows = (dated.length ? dated.map((b) => ({ exp: b.exp, qty: Number(b.qty) || 0 })) : [{ exp: null, qty: totalQty }]);
+      for (const b of batchRows) {
+        try {
+          await supabase.from('item_batches').insert({ item_id: recvItemId, expiry_date: b.exp, quantity: b.qty, note: `Boat note ${noteLabel}` });
+        } catch { /* table may be missing */ }
+      }
+      try {
+        await supabase.from('receiving').insert({
+          item_id: recvItemId, item_name: inv?.name || recv.product_name, date: noteDate,
+          quantity_received: totalQty, unit: recv.unit, supplier_name: recv.supplier,
+          received_by: user?.email || 'mobile', invoice_number: recv.po_number, note: `Boat note: ${noteLabel}`,
+        });
+      } catch { /* optional */ }
+
+      const patch = { received_qty: totalQty, expiry_date: earliest, status: 'received', matched: true, item_id: recvItemId };
+      const { error: lErr } = await supabase.from('boat_note_items').update(patch).eq('id', recv.id);
+      if (lErr) throw lErr;
+
+      const note = notes.find((n) => n.id === selectedId);
+      try { await supabase.from('boat_notes').update({ posted_items: num(note?.posted_items) + 1 }).eq('id', selectedId); } catch {}
+
+      // Reflect locally.
+      setItems((prev) => prev.map((r) => (r.id === recv.id ? { ...r, ...patch } : r)));
+      setInventory((prev) => prev.map((i) => (i.id === recvItemId ? { ...i, current_stock: newStock, expiry_date: earliest || i.expiry_date } : i)));
+      setNotes((prev) => prev.map((n) => (n.id === selectedId ? { ...n, posted_items: num(n.posted_items) + 1 } : n)));
+      closeReceive();
     } catch (e) {
-      Alert.alert('Could not save', e?.message || 'error');
+      Alert.alert('Could not receive', e?.message || 'error');
     } finally { setBusy(false); }
   };
+
   const delItem = (item) => {
     Alert.alert('Remove item', `Remove "${item.product_name}" from this boat note?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -111,10 +193,11 @@ export default function BoatNoteScreen() {
         const { error } = await supabase.from('boat_note_items').delete().eq('id', item.id);
         if (error) return Alert.alert('Error', error.message);
         setItems((prev) => prev.filter((r) => r.id !== item.id));
-        setEditItem(null);
+        closeReceive();
       } },
     ]);
   };
+
   const deleteNote = () => {
     if (!selectedId) return;
     Alert.alert('Delete boat note', 'Delete this whole boat note and all its items? This cannot be undone.', [
@@ -151,27 +234,35 @@ export default function BoatNoteScreen() {
 
   const selectedNote = notes.find((n) => n.id === selectedId);
 
-  const renderItem = ({ item }) => (
-    <TouchableOpacity style={styles.row} onPress={() => openEdit(item)} activeOpacity={0.7}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.name} numberOfLines={2}>
-          {item.product_name || 'Item'} {item.is_sample ? '🧪' : ''}
-        </Text>
-        <Text style={styles.sub} numberOfLines={1}>
-          #{item.part_number || '—'} · {item.supplier || '—'}
-        </Text>
-        <View style={styles.badges}>
-          {!!item.department && <Badge label={item.department} tone="sky" />}
-          {!!item.expiry_date && <Badge label={`exp ${fmtDate(item.expiry_date)}`} tone="yellow" />}
+  const renderItem = ({ item }) => {
+    const received = item.status === 'received';
+    return (
+      <TouchableOpacity
+        style={[styles.row, received && { opacity: 0.7 }]}
+        onPress={() => (received ? null : openReceive(item))}
+        activeOpacity={received ? 1 : 0.7}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.name} numberOfLines={2}>
+            {item.product_name || 'Item'} {item.is_sample ? '🧪' : ''}
+          </Text>
+          <Text style={styles.sub} numberOfLines={1}>
+            #{item.part_number || '—'} · {item.supplier || '—'}
+          </Text>
+          <View style={styles.badges}>
+            {!!item.department && <Badge label={item.department} tone="sky" />}
+            {!!item.expiry_date && <Badge label={`exp ${fmtDate(item.expiry_date)}`} tone="yellow" />}
+            {received ? <Badge label="received" tone="green" /> : <Badge label="pending" tone="dim" />}
+          </View>
         </View>
-      </View>
-      <View style={styles.qtyBox}>
-        <Text style={styles.qty}>{num(item.received_qty)}/{num(item.ordered_qty)}</Text>
-        <Text style={styles.unit}>{item.unit || ''}</Text>
-      </View>
-      <Ionicons name="create-outline" size={18} color={colors.primaryLight} />
-    </TouchableOpacity>
-  );
+        <View style={styles.qtyBox}>
+          <Text style={styles.qty}>{num(item.received_qty)}/{num(item.ordered_qty)}</Text>
+          <Text style={styles.unit}>{item.unit || ''}</Text>
+        </View>
+        <Ionicons name={received ? 'checkmark-circle' : 'add-circle-outline'} size={20} color={received ? colors.green : colors.primaryLight} />
+      </TouchableOpacity>
+    );
+  };
 
   if (loadingNotes) return <Loading text="Loading boat notes…" />;
   if (error && !notes.length) return <ErrorView message={error} onRetry={loadNotes} />;
@@ -211,6 +302,7 @@ export default function BoatNoteScreen() {
 
         {!!selectedId && (
           <>
+            <Text style={styles.hint}>Tap an item to receive it into inventory (set qty &amp; one or more expiry dates).</Text>
             <SearchBar value={search} onChangeText={setSearch} placeholder="Search items in this boat note…" />
             <View style={styles.sortRow}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, flexGrow: 1 }}>
@@ -247,24 +339,76 @@ export default function BoatNoteScreen() {
         />
       )}
 
-      <Modal visible={!!editItem} transparent animationType="fade" onRequestClose={() => setEditItem(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setEditItem(null)}>
+      {/* ── Receive into inventory (multiple expiry) ── */}
+      <Modal visible={!!recv} transparent animationType="fade" onRequestClose={closeReceive}>
+        <Pressable style={styles.backdrop} onPress={closeReceive}>
           <Pressable style={styles.modalCard} onPress={() => {}}>
-            <Text style={styles.modalTitle} numberOfLines={2}>{editItem?.product_name || 'Item'}</Text>
-            <Text style={styles.modalSub}>#{editItem?.part_number || '—'} · ordered {num(editItem?.ordered_qty)} {editItem?.unit || ''}</Text>
-            <Text style={styles.mLabel}>Received quantity</Text>
-            <TextInput style={styles.mInput} value={eqty} onChangeText={(v) => setEqty(v.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.textFaint} />
-            <Text style={styles.mLabel}>Expiry date (YYYY-MM-DD)</Text>
-            <TextInput style={styles.mInput} value={eexp} onChangeText={setEexp} placeholder="2026-12-31" placeholderTextColor={colors.textFaint} autoCapitalize="none" />
-            <TouchableOpacity style={[styles.saveBtn, busy && { opacity: 0.6 }]} onPress={saveEdit} disabled={busy}>
-              <Ionicons name="checkmark" size={18} color="#fff" />
-              <Text style={styles.saveText}>{busy ? 'Saving…' : 'Save'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.delItemBtn} onPress={() => delItem(editItem)}>
-              <Ionicons name="trash-outline" size={16} color={colors.red} />
-              <Text style={styles.delItemText}>Remove item</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.modalClose} onPress={() => setEditItem(null)}><Text style={styles.modalCloseText}>Cancel</Text></TouchableOpacity>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <Text style={styles.modalTitle} numberOfLines={2}>{recv?.product_name || 'Item'}</Text>
+              <Text style={styles.modalSub}>#{recv?.part_number || '—'} · ordered {num(recv?.ordered_qty)} {recv?.unit || ''}</Text>
+
+              {/* Inventory link */}
+              {recvItem ? (
+                <View style={styles.matchBox}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.matchName} numberOfLines={1}>{recvItem.name}</Text>
+                    <Text style={styles.matchSub}>#{recvItem.part_number} · stock {num(recvItem.current_stock)}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => { setRecvItemId(''); setInvSearch(''); }}>
+                    <Text style={styles.changeLink}>Change</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View>
+                  <Text style={styles.warnBox}>No matched item — pick the inventory item to receive into.</Text>
+                  <TextInput style={styles.mInput} value={invSearch} onChangeText={setInvSearch} placeholder="Search inventory by name or code…" placeholderTextColor={colors.textFaint} autoCapitalize="none" />
+                  <View style={styles.pickList}>
+                    {invMatches.length === 0 ? (
+                      <Text style={styles.pickEmpty}>No matching items.</Text>
+                    ) : invMatches.map((i) => (
+                      <TouchableOpacity key={i.id} style={styles.pickRow} onPress={() => setRecvItemId(i.id)}>
+                        <Text style={styles.pickName} numberOfLines={1}>{i.name}</Text>
+                        <Text style={styles.pickCode}>{i.part_number}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Multiple expiry batches */}
+              <View style={styles.batchHead}>
+                <Text style={styles.mLabel}>Quantity &amp; expiry</Text>
+                <TouchableOpacity style={styles.addBatchBtn} onPress={addBatch}>
+                  <Ionicons name="add" size={16} color={colors.primaryLight} />
+                  <Text style={styles.addBatchText}>Add expiry</Text>
+                </TouchableOpacity>
+              </View>
+              {batches.map((b) => (
+                <View key={b.id} style={styles.batchRow}>
+                  <TextInput style={[styles.mInput, { width: 78 }]} value={b.qty}
+                    onChangeText={(v) => setBatch(b.id, 'qty', v.replace(/[^0-9.]/g, ''))}
+                    keyboardType="numeric" placeholder="Qty" placeholderTextColor={colors.textFaint} />
+                  <TextInput style={[styles.mInput, { flex: 1 }]} value={b.exp}
+                    onChangeText={(v) => setBatch(b.id, 'exp', v)}
+                    placeholder="YYYY-MM-DD" placeholderTextColor={colors.textFaint} autoCapitalize="none" />
+                  <TouchableOpacity onPress={() => delBatch(b.id)} disabled={batches.length === 1} style={{ padding: 6, opacity: batches.length === 1 ? 0.3 : 1 }}>
+                    <Ionicons name="trash-outline" size={18} color={colors.red} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <Text style={styles.totalHint}>Total: {totalQty || 0} {recv?.unit || ''}{batches.length > 1 ? ` · ${batches.filter((b) => Number(b.qty) > 0).length} batches` : ''}. Leave date blank if no expiry.</Text>
+
+              <TouchableOpacity style={[styles.saveBtn, busy && { opacity: 0.6 }]} onPress={postReceive} disabled={busy}>
+                <Ionicons name="checkmark" size={18} color="#fff" />
+                <Text style={styles.saveText}>{busy ? 'Receiving…' : `Receive ${totalQty || ''} into inventory`}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.delItemBtn} onPress={() => delItem(recv)}>
+                <Ionicons name="trash-outline" size={16} color={colors.red} />
+                <Text style={styles.delItemText}>Remove item from note</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalClose} onPress={closeReceive}><Text style={styles.modalCloseText}>Cancel</Text></TouchableOpacity>
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
@@ -276,16 +420,32 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   header: { padding: spacing.md, gap: spacing.sm },
   chips: { flexDirection: 'row', gap: 8 },
+  hint: { color: colors.textFaint, fontSize: 12 },
   noteTitle: { color: colors.text, fontSize: 15, fontWeight: '700', flex: 1, marginRight: 8 },
   noteTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   delNoteBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.red, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 4 },
   delNoteText: { color: colors.red, fontSize: 12, fontWeight: '600' },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 },
-  modalCard: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 },
+  modalCard: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, maxHeight: '88%' },
   modalTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
-  modalSub: { color: colors.textDim, fontSize: 12, marginTop: 4, marginBottom: 4 },
-  mLabel: { color: colors.textDim, fontSize: 13, marginTop: 10, marginBottom: 6 },
+  modalSub: { color: colors.textDim, fontSize: 12, marginTop: 4, marginBottom: 8 },
+  matchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(34,197,94,0.12)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.4)', borderRadius: radius.md, padding: 10, marginBottom: 4 },
+  matchName: { color: colors.green, fontSize: 14, fontWeight: '700' },
+  matchSub: { color: colors.textDim, fontSize: 12, marginTop: 2 },
+  changeLink: { color: colors.textDim, fontSize: 12, fontWeight: '600' },
+  warnBox: { color: colors.orange, fontSize: 12, marginBottom: 8 },
+  pickList: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, marginTop: 8, maxHeight: 180, overflow: 'hidden' },
+  pickRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border },
+  pickName: { color: colors.text, fontSize: 14, flex: 1 },
+  pickCode: { color: colors.sky, fontSize: 12, fontFamily: 'monospace' },
+  pickEmpty: { color: colors.textFaint, fontSize: 12, padding: 12 },
+  mLabel: { color: colors.textDim, fontSize: 13 },
   mInput: { backgroundColor: colors.cardAlt, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 11, color: colors.text, fontSize: 15 },
+  batchHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 8 },
+  addBatchBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 4 },
+  addBatchText: { color: colors.primaryLight, fontSize: 12, fontWeight: '600' },
+  batchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  totalHint: { color: colors.textFaint, fontSize: 11, marginTop: 2 },
   saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.primary, paddingVertical: 12, borderRadius: radius.md, marginTop: 14 },
   saveText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   delItemBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, marginTop: 6 },
@@ -293,10 +453,7 @@ const styles = StyleSheet.create({
   modalClose: { alignItems: 'center', paddingVertical: 8 },
   modalCloseText: { color: colors.textDim, fontSize: 14, fontWeight: '600' },
   sortRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dirBtn: {
-    backgroundColor: colors.primary, borderRadius: radius.md,
-    width: 38, height: 34, alignItems: 'center', justifyContent: 'center',
-  },
+  dirBtn: { backgroundColor: colors.primary, borderRadius: radius.md, width: 38, height: 34, alignItems: 'center', justifyContent: 'center' },
   count: { color: colors.textFaint, fontSize: 12 },
   row: {
     flexDirection: 'row', gap: 10, alignItems: 'flex-start',
