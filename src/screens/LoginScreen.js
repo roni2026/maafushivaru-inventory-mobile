@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ScrollView, Alert,
+  KeyboardAvoidingView, Platform, ScrollView, Alert, ImageBackground,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../context/AppContext';
 import { colors, radius, spacing } from '../lib/theme';
 import { PrimaryButton } from '../components/ui';
+
+const BG = require('../../assets/maldives-bg.jpg');
 
 export default function LoginScreen({ navigation }) {
   const { signIn, cfg } = useApp();
@@ -32,11 +34,13 @@ export default function LoginScreen({ navigation }) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+    <ImageBackground source={BG} style={styles.container} resizeMode="cover">
+      <View style={styles.overlay} />
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.logoWrap}>
           <Ionicons name="cube" size={34} color={colors.white} />
         </View>
@@ -89,13 +93,16 @@ export default function LoginScreen({ navigation }) {
         <Text style={styles.footer}>
           {cfg?.url ? `Connected to ${cfg.url.replace(/^https?:\/\//, '')}` : 'Not connected — open Settings first.'}
         </Text>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1 },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,15,30,0.62)' },
   scroll: { padding: spacing.lg, paddingTop: spacing.xl * 2, flexGrow: 1, justifyContent: 'center' },
   logoWrap: {
     alignSelf: 'center', width: 64, height: 64, borderRadius: radius.lg,
@@ -104,8 +111,8 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 22, fontWeight: '800', textAlign: 'center' },
   sub: { color: colors.textDim, fontSize: 13, textAlign: 'center', marginTop: 6, marginBottom: spacing.lg },
   card: {
-    backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1,
-    borderColor: colors.border, padding: spacing.lg,
+    backgroundColor: 'rgba(15,23,42,0.72)', borderRadius: radius.lg, borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)', padding: spacing.lg,
   },
   label: { color: colors.textDim, fontSize: 13, marginBottom: 6, marginTop: 10 },
   input: {

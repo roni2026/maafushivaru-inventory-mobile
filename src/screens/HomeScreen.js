@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet, RefreshControl, ImageBackground } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+const BG = require('../../assets/maldives-bg.jpg');
 import { useApp } from '../context/AppContext';
 import { fetchAll } from '../lib/supabase';
 import { colors, radius, spacing } from '../lib/theme';
@@ -82,12 +84,18 @@ export default function HomeScreen({ navigation }) {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={{ padding: spacing.md }}
+      contentContainerStyle={{ paddingBottom: spacing.md }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.primaryLight} />}
     >
-      <Text style={styles.h1}>Maafushivaru Inventory</Text>
-      <Text style={styles.sub}>Quick view of stock, requisitions and boat notes.</Text>
+      <ImageBackground source={BG} style={styles.hero} imageStyle={styles.heroImg} resizeMode="cover">
+        <View style={styles.heroOverlay} />
+        <View style={styles.heroContent}>
+          <Text style={styles.h1}>Maafushivaru Inventory</Text>
+          <Text style={styles.sub}>Quick view of stock, requisitions and boat notes.</Text>
+        </View>
+      </ImageBackground>
 
+      <View style={styles.body}>
       <View style={styles.tiles}>
         <Tile icon="cube" label="Active items" value={stats.items} onPress={() => navigation.navigate('Inventory')} />
         <Tile icon="alert-circle" label="Low / out" value={stats.low} tone={colors.orange} onPress={() => navigation.navigate('Alerts')} />
@@ -99,6 +107,7 @@ export default function HomeScreen({ navigation }) {
       <NavCard icon="search" title="Inventory" subtitle="Search, edit items & adjust stock" onPress={() => navigation.navigate('Inventory')} />
       <NavCard icon="document-text-outline" title="Requisitions" subtitle="Pending & completed requisitions" onPress={() => navigation.navigate('Requisitions')} />
       <NavCard icon="boat-outline" title="Boat Notes" subtitle={`This week (${stats.weekNotes}) · sortable`} onPress={() => navigation.navigate('BoatNote')} />
+      <NavCard icon="cart-outline" title="Generate Order" subtitle="Build next order · not-arrived items first" onPress={() => navigation.navigate('OrderGen')} />
       <NavCard icon="alert-circle-outline" title="Not Arrived" subtitle="Track items not arrived / wrong, by store" onPress={() => navigation.navigate('NotArrived')} />
       <NavCard icon="notifications-outline" title="Alerts" subtitle="Low stock & expiring items" onPress={() => navigation.navigate('Alerts')} />
       <NavCard icon="settings-outline" title="Settings" subtitle="Account & backend connection" onPress={() => navigation.navigate('Settings')} />
@@ -110,14 +119,20 @@ export default function HomeScreen({ navigation }) {
       <NavCard icon="checkbox-outline" title="Store Tasks" subtitle="Create reminders · mark pending / working / done" onPress={() => navigation.navigate('StoreTasks')} />
       <NavCard icon="add-circle-outline" title="Add item" subtitle="Create a new inventory item" onPress={() => navigation.navigate('ItemForm')} />
       <NavCard icon="business-outline" title="Stores" subtitle="Add, rename & delete stores" onPress={() => navigation.navigate('Stores')} />
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  h1: { color: colors.text, fontSize: 22, fontWeight: '800' },
-  sub: { color: colors.textDim, fontSize: 13, marginTop: 4, marginBottom: spacing.lg },
+  hero: { width: '100%', minHeight: 150, justifyContent: 'flex-end' },
+  heroImg: { },
+  heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,15,30,0.55)' },
+  heroContent: { padding: spacing.lg, paddingTop: spacing.xl },
+  body: { padding: spacing.md },
+  h1: { color: '#ffffff', fontSize: 22, fontWeight: '800' },
+  sub: { color: '#e2f4ff', fontSize: 13, marginTop: 4 },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   tile: {
     flexGrow: 1, flexBasis: '47%', backgroundColor: colors.card, borderWidth: 1,

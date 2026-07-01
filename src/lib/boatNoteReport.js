@@ -18,9 +18,15 @@ export const CATEGORIES = [
   { key: 'damaged',     label: 'Damaged',     hex: '#b91c1c' },
   { key: 'wrong_item',  label: 'Wrong Item',  hex: '#ea580c' },
   { key: 'not_arrived', label: 'Not Arrived', hex: '#dc2626' },
+  { key: 'short',       label: 'Short',       hex: '#b45309' },
   { key: 'pending',     label: 'Pending',     hex: '#ca8a04' },
 ];
-const KNOWN = ['received', 'damaged', 'wrong_item', 'not_arrived'];
+const KNOWN = ['received', 'damaged', 'wrong_item', 'not_arrived', 'short'];
+// Affected-unit count for a delivery problem (damaged / short / wrong).
+const issueQty = (it) => {
+  const v = it.damaged_qty ?? it.short_qty ?? it.wrong_qty;
+  return (v === null || v === undefined || v === '') ? '' : Number(v);
+};
 
 export function bucketize(lines, sortBy = 'line_no', sortDir = 'asc') {
   const map = {};
@@ -73,8 +79,10 @@ export function buildHtml(note, lines, opts = {}) {
         <td>${esc(it.unit)}</td>
         <td style="text-align:center">${esc(it.ordered_qty)}</td>
         <td style="text-align:center">${esc(it.received_qty ?? '—')}</td>
+        <td style="text-align:center">${esc(issueQty(it) === '' ? '—' : issueQty(it))}</td>
         <td>${esc(it.expiry_date || '—')}</td>
         <td>${esc(it.supplier)}</td>
+        <td style="font-family:monospace">${esc(it.po_number || '—')}</td>
         <td>${esc(it.note || '')}</td>
       </tr>`).join('');
     return `
@@ -83,7 +91,7 @@ export function buildHtml(note, lines, opts = {}) {
       </h2>
       <table><thead><tr>
         <th>#</th><th>Code</th><th>Product</th><th>Dept</th><th>Unit</th>
-        <th>Ord.</th><th>Rcvd</th><th>Expiry</th><th>Supplier</th><th>Note</th>
+        <th>Ord.</th><th>Rcvd</th><th>Issue Qty</th><th>Expiry</th><th>Supplier</th><th>PO</th><th>Note</th>
       </tr></thead><tbody>${rows}</tbody></table>`;
   };
 
@@ -123,9 +131,9 @@ export async function sharePdf(note, lines, opts) {
 // Build a categorised workbook (SheetJS). Sheet 1 = categorised, Sheet 2 = all.
 function buildWorkbook(note, lines, opts) {
   const buckets = bucketize(lines, opts?.sortBy, opts?.sortDir);
-  const header = ['#', 'Code', 'Product', 'Dept', 'Unit', 'Ordered', 'Received', 'Expiry', 'Supplier', 'PO', 'Note'];
+  const header = ['#', 'Code', 'Product', 'Dept', 'Unit', 'Ordered', 'Received', 'Issue Qty', 'Expiry', 'Supplier', 'PO', 'Note'];
   const rowOf = (it) => [it.line_no ?? '', it.part_number || '', it.product_name || '', it.department || '', it.unit || '',
-    Number(it.ordered_qty) || 0, it.received_qty ?? '', it.expiry_date || '', it.supplier || '', it.po_number || '', it.note || ''];
+    Number(it.ordered_qty) || 0, it.received_qty ?? '', issueQty(it), it.expiry_date || '', it.supplier || '', it.po_number || '', it.note || ''];
 
   const aoa = [
     [`Boat Note Receiving Report — ${note.label || note.note_date || 'Boat Note'}`],
