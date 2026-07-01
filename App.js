@@ -29,6 +29,7 @@ import StoreFormScreen from './src/screens/StoreFormScreen';
 import StoreTasksScreen from './src/screens/StoreTasksScreen';
 import StoreTaskFormScreen from './src/screens/StoreTaskFormScreen';
 import NotArrivedScreen from './src/screens/NotArrivedScreen';
+import OrderGenScreen from './src/screens/OrderGenScreen';
 import { initNotifications } from './src/lib/notifications';
 
 const Tab = createBottomTabNavigator();
@@ -152,6 +153,7 @@ function Root() {
           <Stack.Screen name="StoreTasks" component={StoreTasksScreen} options={{ title: 'Store Tasks' }} />
           <Stack.Screen name="StoreTaskForm" component={StoreTaskFormScreen} options={{ title: 'Task' }} />
           <Stack.Screen name="NotArrived" component={NotArrivedScreen} options={{ title: 'Not Arrived' }} />
+          <Stack.Screen name="OrderGen" component={OrderGenScreen} options={{ title: 'Generate Order' }} />
           <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
         </Stack.Navigator>
       )}
