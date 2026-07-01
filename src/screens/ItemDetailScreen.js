@@ -1,14 +1,19 @@
-import React, { useCallback, useLayoutEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
   ScrollView, View, Text, StyleSheet, TouchableOpacity, Modal, Pressable,
-  TextInput, Alert, ActivityIndicator,
+  TextInput, Alert, ActivityIndicator, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { useApp } from '../context/AppContext';
+import { fetchAll } from '../lib/supabase';
 import { colors, radius, spacing } from '../lib/theme';
 import { Badge, PrimaryButton, SecondaryButton, DangerButton } from '../components/ui';
 import { daysUntil, fmtDate, num } from '../lib/format';
+import { compressImageToLimit } from '../lib/imageprep';
+import { listItemImages, uploadItemImage, removeItemImage, MAX_IMAGES } from '../lib/itemImages';
+import { logItemActivity, fetchItemActivity, actionLabel, fmtWhen } from '../lib/activity';
 
 function Field({ label, value }) {
   return (
@@ -20,7 +25,8 @@ function Field({ label, value }) {
 }
 
 export default function ItemDetailScreen({ navigation, route }) {
-  const { supabase } = useApp();
+  const { supabase, user } = useApp();
+  const actor = user?.email || 'mobile';
   const [item, setItem] = useState(route.params?.item || null);
   const [busy, setBusy] = useState(false);
 
@@ -29,6 +35,14 @@ export default function ItemDetailScreen({ navigation, route }) {
   const [adjMode, setAdjMode] = useState('add'); // 'add' | 'remove' | 'set'
   const [adjQty, setAdjQty] = useState('');
   const [adjNote, setAdjNote] = useState('');
+
+  // Photos, activity, sub-category state.
+  const [images, setImages] = useState([]);
+  const [uploadingImg, setUploadingImg] = useState(false);
+  const [activity, setActivity] = useState([]);
+  const [showAllActivity, setShowAllActivity] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [stores, setStores] = useState([]);
 
   const itemId = route.params?.item?.id;
 
@@ -44,9 +58,89 @@ export default function ItemDetailScreen({ navigation, route }) {
     } catch { /* keep current */ }
   }, [supabase, itemId]);
 
-  useFocusEffect(useCallback(() => { reload(); }, [reload]));
+  const reloadMedia = useCallback(async () => {
+    if (!supabase || !itemId) return;
+    try {
+      const [imgs, act] = await Promise.all([
+        listItemImages(supabase, itemId),
+        fetchItemActivity(supabase, itemId, 15),
+      ]);
+      setImages(imgs); setActivity(act);
+    } catch { /* ignore */ }
+  }, [supabase, itemId]);
+
+  useFocusEffect(useCallback(() => { reload(); reloadMedia(); }, [reload, reloadMedia]));
 
   const active = item?.active !== false;
+
+  // ── Photos ────────────────────────────────────────────────────────────────
+  const addPhoto = async (fromCamera) => {
+    if (images.length >= MAX_IMAGES) { Alert.alert('Limit reached', `Maximum ${MAX_IMAGES} photos per item.`); return; }
+    try {
+      const perm = fromCamera
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) { Alert.alert('Permission needed', 'Allow photo access to add images.'); return; }
+      const res = fromCamera
+        ? await ImagePicker.launchCameraAsync({ quality: 1 })
+        : await ImagePicker.launchImageLibraryAsync({ quality: 1, mediaTypes: ImagePicker.MediaTypeOptions.Images });
+      if (res.canceled || !res.assets?.length) return;
+      setUploadingImg(true);
+      const asset = res.assets[0];
+      const out = await compressImageToLimit(asset.uri);          // → JPEG < 300 KB
+      await uploadItemImage(supabase, itemId, out.base64, { createdBy: actor, bytes: out.bytes });
+      await logItemActivity(supabase, itemId, 'photo_added', `Photo added (${Math.round((out.bytes || 0) / 1024)} KB)`, actor);
+      await reloadMedia();
+    } catch (e) {
+      Alert.alert('Upload failed', e?.message || 'error');
+    } finally {
+      setUploadingImg(false);
+    }
+  };
+
+  const chooseAddPhoto = () => {
+    Alert.alert('Add photo', 'Choose a source', [
+      { text: 'Camera', onPress: () => addPhoto(true) },
+      { text: 'Photo library', onPress: () => addPhoto(false) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const removePhoto = (img) => {
+    Alert.alert('Remove photo', 'Remove this photo?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: async () => {
+        try {
+          await removeItemImage(supabase, img);
+          await logItemActivity(supabase, itemId, 'photo_removed', 'Photo removed', actor);
+          await reloadMedia();
+        } catch (e) { Alert.alert('Error', e?.message || 'error'); }
+      } },
+    ]);
+  };
+
+  // ── Change sub-category ─────────────────────────────────────────────────────
+  const openMove = async () => {
+    setMoveOpen(true);
+    if (!stores.length) {
+      try {
+        const rows = await fetchAll(() => supabase.from('stores').select('id,name,category').order('category').order('name'));
+        setStores(rows);
+      } catch { /* ignore */ }
+    }
+  };
+  const moveSubcategory = async (storeId) => {
+    setBusy(true);
+    try {
+      const { error } = await supabase.from('items').update({ store_id: storeId }).eq('id', item.id);
+      if (error) throw error;
+      const s = stores.find((x) => x.id === storeId);
+      await logItemActivity(supabase, itemId, 'subcategory_changed', `Moved to ${s?.name || 'another sub-category'}`, actor);
+      setMoveOpen(false);
+      await reload(); await reloadMedia();
+    } catch (e) { Alert.alert('Could not move', e?.message || 'error'); }
+    finally { setBusy(false); }
+  };
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -90,11 +184,14 @@ export default function ItemDetailScreen({ navigation, route }) {
           item_id: item.id,
           quantity_change: delta,
           new_quantity: after,
+          updated_by: actor,
           note: adjNote?.trim() || (adjMode === 'set' ? 'Stock set (mobile)' : adjMode === 'add' ? 'Stock added (mobile)' : 'Stock removed (mobile)'),
         });
       } catch { /* logging is non-critical */ }
+      const act = delta > 0 ? 'stock_add' : delta < 0 ? 'stock_remove' : 'stock_set';
+      logItemActivity(supabase, item.id, act, `${delta >= 0 ? '+' : ''}${delta} → ${after}${adjNote?.trim() ? ' · ' + adjNote.trim() : ''}`, actor);
       setAdjOpen(false);
-      await reload();
+      await reload(); await reloadMedia();
     } catch (e) {
       Alert.alert('Could not update stock', e?.message || 'error');
     } finally {
@@ -107,6 +204,7 @@ export default function ItemDetailScreen({ navigation, route }) {
     try {
       const { error } = await supabase.from('items').update({ active: !active }).eq('id', item.id);
       if (error) throw error;
+      logItemActivity(supabase, item.id, !active ? 'activated' : 'deactivated', !active ? 'Item activated' : 'Item deactivated', actor);
       await reload();
     } catch (e) {
       Alert.alert('Could not update', e?.message || 'error');
@@ -196,7 +294,63 @@ export default function ItemDetailScreen({ navigation, route }) {
           <Field label="Description / notes" value={item?.notes} />
         </View>
 
+        {/* Photos (up to 3, auto-compressed to <300 KB) */}
+        <View style={styles.card}>
+          <View style={styles.photoHead}>
+            <Text style={styles.cardTitle}>Photos <Text style={styles.countHint}>{images.length}/{MAX_IMAGES}</Text></Text>
+            <TouchableOpacity onPress={chooseAddPhoto} disabled={uploadingImg || images.length >= MAX_IMAGES} style={styles.addPhotoBtn}>
+              {uploadingImg
+                ? <ActivityIndicator color={colors.primaryLight} size="small" />
+                : <><Ionicons name="camera-outline" size={16} color={images.length >= MAX_IMAGES ? colors.textFaint : colors.primaryLight} /><Text style={[styles.addPhotoText, images.length >= MAX_IMAGES && { color: colors.textFaint }]}>Add</Text></>}
+            </TouchableOpacity>
+          </View>
+          {images.length === 0 ? (
+            <Text style={styles.emptyPhoto}>No photos yet. Add up to {MAX_IMAGES} — any size is auto-optimised to under 300 KB.</Text>
+          ) : (
+            <View style={styles.photoRow}>
+              {images.map((img, i) => (
+                <View key={img.id} style={styles.photoBox}>
+                  <Image source={{ uri: img.url }} style={styles.photo} />
+                  {i === 0 && <View style={styles.primaryTag}><Text style={styles.primaryTagText}>Primary</Text></View>}
+                  <TouchableOpacity style={styles.photoDel} onPress={() => removePhoto(img)}>
+                    <Ionicons name="trash" size={13} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* Last updated + activity log */}
+        <View style={styles.card}>
+          <View style={styles.photoHead}>
+            <Text style={styles.cardTitle}>Update log</Text>
+            {activity.length > 1 && (
+              <TouchableOpacity onPress={() => setShowAllActivity((v) => !v)}>
+                <Text style={styles.viewMore}>{showAllActivity ? 'Show latest' : `View more (${Math.min(activity.length, 15)})`}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <Text style={styles.lastUpdated}>
+            Last updated {fmtWhen(item?.updated_at)}{item?.updated_by ? ` · ${item.updated_by}` : ''}
+          </Text>
+          {activity.length === 0 ? (
+            <Text style={styles.emptyPhoto}>No changes recorded yet.</Text>
+          ) : (
+            (showAllActivity ? activity.slice(0, 15) : activity.slice(0, 1)).map((a) => (
+              <View key={a.id} style={styles.actRow}>
+                <Badge label={actionLabel(a.action)} tone="dim" />
+                <View style={{ flex: 1 }}>
+                  {!!a.detail && <Text style={styles.actDetail}>{a.detail}</Text>}
+                  <Text style={styles.actMeta}>{fmtWhen(a.created_at)}{a.changed_by ? ` · ${a.changed_by}` : ''}</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+
         <PrimaryButton label="Edit item" icon="create-outline" onPress={() => navigation.navigate('ItemForm', { item })} disabled={busy} />
+        <SecondaryButton label="Change sub-category" icon="folder-open-outline" onPress={openMove} disabled={busy} />
         <SecondaryButton label={active ? 'Deactivate item' : 'Activate item'} icon={active ? 'eye-off-outline' : 'eye-outline'} onPress={toggleActive} disabled={busy} />
         <DangerButton label="Delete item" icon="trash-outline" onPress={remove} disabled={busy} />
         <View style={{ height: 40 }} />
@@ -235,6 +389,31 @@ export default function ItemDetailScreen({ navigation, route }) {
               <Text style={styles.modalCloseText}>Cancel</Text>
             </TouchableOpacity>
             {busy && <ActivityIndicator color={colors.primaryLight} style={{ marginTop: 8 }} />}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Change sub-category modal */}
+      <Modal visible={moveOpen} transparent animationType="fade" onRequestClose={() => setMoveOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setMoveOpen(false)}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Change sub-category</Text>
+            <Text style={styles.modalSub}>Move “{item?.name}” to a different sub-category (store). This does not remove it from inventory.</Text>
+            <ScrollView style={{ maxHeight: 320, marginTop: 6 }}>
+              {stores.map((s) => {
+                const current = s.id === item?.store_id;
+                return (
+                  <TouchableOpacity key={s.id} style={styles.storeRow} disabled={current || busy} onPress={() => moveSubcategory(s.id)}>
+                    <Text style={[styles.storeName, current && { color: colors.textFaint }]}>{s.name}</Text>
+                    <Text style={styles.storeCat}>{s.category}{current ? ' · current' : ''}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {stores.length === 0 && <ActivityIndicator color={colors.primaryLight} style={{ marginVertical: 16 }} />}
+            </ScrollView>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setMoveOpen(false)}>
+              <Text style={styles.modalCloseText}>Cancel</Text>
+            </TouchableOpacity>
           </Pressable>
         </Pressable>
       </Modal>
@@ -289,4 +468,25 @@ const styles = StyleSheet.create({
   },
   modalClose: { marginTop: spacing.sm, alignItems: 'center', paddingVertical: 8 },
   modalCloseText: { color: colors.textDim, fontSize: 14, fontWeight: '600' },
+
+  cardTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  countHint: { color: colors.textFaint, fontSize: 12, fontWeight: '500' },
+  photoHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  addPhotoBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: radius.sm, backgroundColor: colors.cardAlt },
+  addPhotoText: { color: colors.primaryLight, fontSize: 13, fontWeight: '600' },
+  emptyPhoto: { color: colors.textFaint, fontSize: 12, lineHeight: 17 },
+  photoRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  photoBox: { width: 92, height: 92, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.cardAlt },
+  photo: { width: '100%', height: '100%' },
+  primaryTag: { position: 'absolute', top: 4, left: 4, backgroundColor: colors.primary, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  primaryTagText: { color: '#fff', fontSize: 9, fontWeight: '700' },
+  photoDel: { position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 6, padding: 4 },
+  viewMore: { color: colors.primaryLight, fontSize: 13, fontWeight: '600' },
+  lastUpdated: { color: colors.textDim, fontSize: 12, marginBottom: 8 },
+  actRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 6 },
+  actDetail: { color: colors.text, fontSize: 13 },
+  actMeta: { color: colors.textFaint, fontSize: 11, marginTop: 2 },
+  storeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: colors.border },
+  storeName: { color: colors.text, fontSize: 14 },
+  storeCat: { color: colors.textFaint, fontSize: 12 },
 });

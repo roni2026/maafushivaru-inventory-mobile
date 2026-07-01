@@ -6,13 +6,15 @@ import { useApp } from '../context/AppContext';
 import { fetchAll } from '../lib/supabase';
 import { colors, spacing } from '../lib/theme';
 import { FormInput, SelectField, PrimaryButton, Loading, ErrorView, SectionLabel } from '../components/ui';
+import { logItemActivity } from '../lib/activity';
 
 const UNITS = ['pcs', 'box', 'bottle', 'can', 'kg', 'g', 'L', 'mL', 'pack', 'carton', 'tray', 'roll', 'each'];
 
 // Add a new item or edit an existing one. Existing item is passed via
 // route.params.item; absence of it means "create".
 export default function ItemFormScreen({ navigation, route }) {
-  const { supabase } = useApp();
+  const { supabase, user } = useApp();
+  const actor = user?.email || 'mobile';
   const editing = route.params?.item || null;
   const isEdit = !!editing;
 
@@ -92,11 +94,20 @@ export default function ItemFormScreen({ navigation, route }) {
     setSaving(true);
     try {
       if (isEdit) {
+        payload.updated_by = actor;
         const { error } = await supabase.from('items').update(payload).eq('id', editing.id);
         if (error) throw error;
+        if (editing.store_id && editing.store_id !== payload.store_id) {
+          const s = stores.find((x) => x.id === payload.store_id);
+          logItemActivity(supabase, editing.id, 'subcategory_changed', `Moved to ${s?.name || 'another sub-category'}`, actor);
+        } else {
+          logItemActivity(supabase, editing.id, 'edited', 'Item details edited', actor);
+        }
       } else {
-        const { error } = await supabase.from('items').insert(payload);
+        payload.updated_by = actor;
+        const { data: created, error } = await supabase.from('items').insert(payload).select('id').single();
         if (error) throw error;
+        if (created?.id) logItemActivity(supabase, created.id, 'created', `Item created: ${payload.name}`, actor);
       }
       navigation.navigate('Tabs', { screen: 'Inventory', params: { refresh: Date.now() } });
     } catch (e) {

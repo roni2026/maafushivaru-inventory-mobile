@@ -6,6 +6,9 @@ import { fetchAll } from '../lib/supabase';
 import { colors, radius, spacing } from '../lib/theme';
 import { Chip, Loading, EmptyState, ErrorView, Badge, SearchBar, SelectField } from '../components/ui';
 import { thisWeekRange, fmtDate, num } from '../lib/format';
+import { logItemActivity } from '../lib/activity';
+import { printReport, sharePdf, shareExcel, counts as reportCounts } from '../lib/boatNoteReport';
+import { sendBoatNoteReport } from '../lib/brevo';
 
 const SORTS = [
   { key: 'product_name', label: 'Name' },
@@ -42,6 +45,11 @@ export default function BoatNoteScreen({ navigation }) {
   const [batches, setBatches] = useState([]);        // [{ id, qty, exp }]
   const [recvNote, setRecvNote] = useState('');      // note for not-arrived / wrong-item
   const [busy, setBusy] = useState(false);
+
+  // Report state
+  const [reportBusy, setReportBusy] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [recipient, setRecipient] = useState('');
 
   // ── Load inventory once (for matching + receiving) ──
   useEffect(() => {
@@ -94,7 +102,7 @@ export default function BoatNoteScreen({ navigation }) {
     try {
       const { data, error: e } = await supabase
         .from('boat_note_items')
-        .select('id,line_no,supplier,po_number,part_number,product_name,unit,ordered_qty,received_qty,expiry_date,department,status,is_sample,item_id,matched')
+        .select('id,line_no,supplier,po_number,part_number,product_name,unit,ordered_qty,received_qty,expiry_date,department,status,is_sample,item_id,matched,note,received_by,received_at')
         .eq('boat_note_id', selectedId);
       if (e) throw e;
       setItems(data || []);
@@ -139,6 +147,34 @@ export default function BoatNoteScreen({ navigation }) {
   const addBatch = () => setBatches((prev) => [...prev, { id: rid(), qty: '', exp: '' }]);
   const delBatch = (id) => setBatches((prev) => (prev.length > 1 ? prev.filter((b) => b.id !== id) : prev));
   const totalQty = useMemo(() => batches.reduce((s, b) => s + (Number(b.qty) || 0), 0), [batches]);
+
+  // ── Reports (Excel / Print / PDF / Send via Brevo) ─────────────────────────
+  const reportNote = () => {
+    const n = notes.find((x) => x.id === selectedId);
+    return { label: n?.label || 'Boat note', note_date: n?.note_date || null, created_by: n?.created_by || (user?.email || 'mobile') };
+  };
+  const runReport = async (fn) => {
+    if (!items.length) { Alert.alert('Nothing to export', 'This boat note has no items.'); return; }
+    setReportBusy(true);
+    try { await fn(reportNote(), items); }
+    catch (e) { Alert.alert('Report error', e?.message || 'error'); }
+    finally { setReportBusy(false); }
+  };
+  const doExcel = () => runReport(shareExcel);
+  const doPrint = () => runReport(printReport);
+  const doPdf   = () => runReport(sharePdf);
+  const doSend  = async () => {
+    if (!items.length) { Alert.alert('Nothing to send', 'This boat note has no items.'); return; }
+    setReportBusy(true);
+    try {
+      const res = await sendBoatNoteReport(supabase, { note: reportNote(), lines: items, recipientEmail: recipient.trim() || undefined });
+      setSendOpen(false);
+      Alert.alert('Report sent', `Emailed to ${res.to}`);
+    } catch (e) {
+      Alert.alert('Could not send', e?.message || 'error');
+    } finally { setReportBusy(false); }
+  };
+
 
   const recvItem = useMemo(() => inventory.find((i) => i.id === recvItemId) || null, [inventory, recvItemId]);
   const invMatches = useMemo(() => {
@@ -187,9 +223,14 @@ export default function BoatNoteScreen({ navigation }) {
         });
       } catch { /* optional */ }
 
-      const patch = { received_qty: totalQty, expiry_date: earliest, status: 'received', matched: true, item_id: recvItemId };
+      const patch = {
+        received_qty: totalQty, expiry_date: earliest, status: 'received', matched: true, item_id: recvItemId,
+        received_by: user?.email || 'mobile', received_at: new Date().toISOString(),
+      };
       const { error: lErr } = await supabase.from('boat_note_items').update(patch).eq('id', recv.id);
       if (lErr) throw lErr;
+
+      logItemActivity(supabase, recvItemId, 'received', `Received ${totalQty} ${recv.unit || ''} · Boat note ${noteLabel}`, user?.email || 'mobile');
 
       const note = notes.find((n) => n.id === selectedId);
       try { await supabase.from('boat_notes').update({ posted_items: num(note?.posted_items) + 1 }).eq('id', selectedId); } catch {}
@@ -276,7 +317,11 @@ export default function BoatNoteScreen({ navigation }) {
           <View style={styles.badges}>
             {!!item.department && <Badge label={item.department} tone="sky" />}
             {!!item.expiry_date && <Badge label={`exp ${fmtDate(item.expiry_date)}`} tone="yellow" />}
-            {received ? <Badge label="received" tone="green" /> : <Badge label="pending" tone="dim" />}
+            {received ? <Badge label="received" tone="green" />
+              : item.status === 'damaged' ? <Badge label="damaged" tone="red" />
+              : item.status === 'not_arrived' ? <Badge label="not arrived" tone="red" />
+              : item.status === 'wrong_item' ? <Badge label="wrong item" tone="orange" />
+              : <Badge label="pending" tone="dim" />}
           </View>
         </View>
         <View style={styles.qtyBox}>
@@ -329,6 +374,27 @@ export default function BoatNoteScreen({ navigation }) {
             </View>
           </View>
         ) : null}
+
+        {!!selectedId && items.length > 0 && (
+          <View style={styles.reportBar}>
+            <TouchableOpacity style={styles.reportBtn} onPress={doExcel} disabled={reportBusy}>
+              <Ionicons name="grid-outline" size={15} color={colors.green} />
+              <Text style={styles.reportText}>Excel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.reportBtn} onPress={doPrint} disabled={reportBusy}>
+              <Ionicons name="print-outline" size={15} color={colors.primaryLight} />
+              <Text style={styles.reportText}>Print</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.reportBtn} onPress={doPdf} disabled={reportBusy}>
+              <Ionicons name="document-outline" size={15} color={colors.sky} />
+              <Text style={styles.reportText}>PDF</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.reportBtn} onPress={() => setSendOpen(true)} disabled={reportBusy}>
+              <Ionicons name="mail-outline" size={15} color={colors.yellow} />
+              <Text style={styles.reportText}>Send</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {!!selectedId && (
           <>
@@ -450,6 +516,10 @@ export default function BoatNoteScreen({ navigation }) {
                   <Ionicons name="swap-horizontal-outline" size={16} color={colors.orange} />
                   <Text style={[styles.issueText, { color: colors.orange }]}>Wrong item</Text>
                 </TouchableOpacity>
+                <TouchableOpacity style={[styles.issueBtn, { borderColor: colors.red }]} onPress={() => markIssue('damaged')} disabled={busy}>
+                  <Ionicons name="warning-outline" size={16} color={colors.red} />
+                  <Text style={[styles.issueText, { color: colors.red }]}>Damaged</Text>
+                </TouchableOpacity>
               </View>
 
               <TouchableOpacity style={styles.delItemBtn} onPress={() => delItem(recv)}>
@@ -458,6 +528,37 @@ export default function BoatNoteScreen({ navigation }) {
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalClose} onPress={closeReceive}><Text style={styles.modalCloseText}>Cancel</Text></TouchableOpacity>
             </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Send report modal */}
+      <Modal visible={sendOpen} transparent animationType="fade" onRequestClose={() => setSendOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setSendOpen(false)}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Send boat note report</Text>
+            <Text style={styles.modalSub}>
+              Emails the categorised report (Received, Damaged, Wrong Item, Not Arrived, Pending) with the Excel file attached, via Brevo. Configure the API key & sender in the web app Settings.
+            </Text>
+            <Text style={styles.mLabel}>Recipient email (optional — uses saved recipient if blank)</Text>
+            <TextInput
+              style={styles.mInput}
+              value={recipient}
+              onChangeText={setRecipient}
+              placeholder="manager@resort.com"
+              placeholderTextColor={colors.textFaint}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            <View style={{ marginTop: 10 }}>
+              <TouchableOpacity style={styles.saveBtn} onPress={doSend} disabled={reportBusy}>
+                <Ionicons name="mail" size={18} color="#fff" />
+                <Text style={styles.saveText}>{reportBusy ? 'Sending…' : 'Send report'}</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setSendOpen(false)}>
+              <Text style={styles.modalCloseText}>Cancel</Text>
+            </TouchableOpacity>
           </Pressable>
         </Pressable>
       </Modal>
@@ -479,6 +580,9 @@ const styles = StyleSheet.create({
   naText: { color: colors.orange, fontSize: 12, fontWeight: '600' },
   issueDivider: { height: 1, backgroundColor: colors.border, marginTop: 16, marginBottom: 12 },
   issueRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  reportBar: { flexDirection: 'row', gap: 8, marginTop: 4, marginBottom: 4 },
+  reportBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt },
+  reportText: { color: colors.text, fontSize: 12, fontWeight: '600' },
   issueBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderRadius: radius.md, paddingVertical: 10 },
   issueText: { fontSize: 13, fontWeight: '700' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 },
